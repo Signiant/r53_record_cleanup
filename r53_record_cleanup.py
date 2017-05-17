@@ -160,7 +160,6 @@ def delete_records(record_list):
             r53_client.change_resource_record_sets(HostedZoneId=zone_id, ChangeBatch=change_batch)
             logging.debug("Route53 Change Resource Record request received successfully")
         except botocore.exceptions.ClientError as e:
-            logging.error("Connection error to AWS. Check your credentials")
             logging.error("Received error:  %s" % (e))
             exit(1)
         records_processed += (end_record-start_record)
