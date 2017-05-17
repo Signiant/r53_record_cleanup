@@ -222,7 +222,7 @@ def r53_cleanup(zone_name, target_alias, dryrun=False):
 
 if __name__ == "__main__":
 
-    LOG_FILENAME = 'ms-cloud-r53-cleanup.log'
+    LOG_FILENAME = 'r53-record-cleanup.log'
 
     description = "Cleanup old R53 Records\n"
     description += "Note: The following environment variables can be set prior to execution\n"
