@@ -122,7 +122,7 @@ def restore_deleted_records(file_path):
 
 
 
-def delete_records(record_list):
+def delete_records(zone_id, record_list):
     session = boto3.session.Session()
     r53_client = session.client('route53')
 
@@ -141,7 +141,6 @@ def delete_records(record_list):
         logging.debug('processing records %d to %d' % (start_record, end_record))
         records_to_process = record_list[start_record:end_record:1]
         logging.debug('%s' % records_to_process)
-        zone_id = records_to_process[0]['AliasTarget']['HostedZoneId']
         for record in records_to_process:
             resource_record_set = {
                 'AliasTarget': {
@@ -168,54 +167,59 @@ def delete_records(record_list):
 
 def r53_cleanup(zone_name, target_alias, dryrun=False):
     zone = get_hosted_zone_by_name(zone_name)
-    record_set = get_all_records_in_zone(zone['Id'])
-    logging.debug(record_set)
+    if zone:
+        zone_id = zone['Id']
+        record_set = get_all_records_in_zone(zone['Id'])
+        logging.debug(record_set)
 
-    if not target_alias.endswith('.'):
-        target_alias += '.'
+        if not target_alias.endswith('.'):
+            target_alias += '.'
 
-    to_delete=[]
-    for record in record_set:
-        record_name = record['Name']
-        record_type = record['Type']
-        if record_type == 'A':
-            if record_name == zone['Name']:
-                logging.debug('Skipping %s because it is the zone being searched' % record_name)
-                continue
-            if record_name not in KEEP_LIST:
-                if 'AliasTarget' in record:
-                    dns_name = record['AliasTarget']['DNSName']
-                    if dns_name == target_alias:
-                        logging.debug(' To Be Deleted: %s' % record['Name'])
-                        to_delete.append(record)
+        to_delete=[]
+        for record in record_set:
+            record_name = record['Name']
+            record_type = record['Type']
+            if record_type == 'A':
+                if record_name == zone['Name']:
+                    logging.debug('Skipping %s because it is the zone being searched' % record_name)
+                    continue
+                if record_name not in KEEP_LIST:
+                    if 'AliasTarget' in record:
+                        dns_name = record['AliasTarget']['DNSName']
+                        if dns_name == target_alias:
+                            logging.debug(' To Be Deleted: %s' % record['Name'])
+                            to_delete.append(record)
+                        else:
+                            logging.debug("Skipping %s because Alias Target doesn't match" % record_name)
                     else:
-                        logging.debug("Skipping %s because Alias Target doesn't match" % record_name)
+                        logging.debug("Skipping %s because it does't have an Alias Target" % record_name)
                 else:
-                    logging.debug("Skipping %s because it does't have an Alias Target" % record_name)
+                    logging.debug('Skipping %s because it is in the KEEP_LIST' % record_name)
             else:
-                logging.debug('Skipping %s because it is in the KEEP_LIST' % record_name)
+                logging.debug('Skipping %s due to incorrect record type (%s)' % (record_name, record_type))
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        with temp_file as output_file:
+            yaml.safe_dump(to_delete, output_file)
+        temp_file_yaml = temp_file.name + '.yaml'
+        os.rename(temp_file.name, temp_file_yaml)
+        logging.info('Records to be deleted written to "%s"' % temp_file_yaml)
+
+        deleted_record_count = len(to_delete)
+        # Now actually delete them
+        logging.info("Found %d records to be deleted" % deleted_record_count)
+        if not dryrun:
+            logging.info('Deleting records...')
+            logging.info(str(datetime.datetime.now()))
+            delete_records(zone_id, to_delete)
+            logging.info(str(datetime.datetime.now()))
+            logging.info('Record deletion complete (or pending) - check AWS Console to make sure things are as expected.')
+            logging.info('To restore these records, use --restore %s' % temp_file_yaml)
         else:
-            logging.debug('Skipping %s due to incorrect record type (%s)' % (record_name, record_type))
-
-    temp_file = tempfile.NamedTemporaryFile(delete=False)
-    with temp_file as output_file:
-        yaml.safe_dump(to_delete, output_file)
-    temp_file_yaml = temp_file.name + '.yaml'
-    os.rename(temp_file.name, temp_file_yaml)
-    logging.info('Records to be deleted written to "%s"' % temp_file_yaml)
-
-    deleted_record_count = len(to_delete)
-    # Now actually delete them
-    logging.info("Found %d records to be deleted" % deleted_record_count)
-    if not dryrun:
-        logging.info('Deleting records...')
-        logging.info(str(datetime.datetime.now()))
-        delete_records(to_delete)
-        logging.info(str(datetime.datetime.now()))
-        logging.info('Record deletion complete (or pending) - check AWS Console to make sure things are as expected.')
-        logging.info('To restore these records, use --restore %s' % temp_file_yaml)
+            logging.info('dryrun selected - no records deleted')
     else:
-        logging.info('dryrun selected - no records deleted')
+        logging.error('Unable to find zone with name %s' % zone_name)
+
 
 
 if __name__ == "__main__":
